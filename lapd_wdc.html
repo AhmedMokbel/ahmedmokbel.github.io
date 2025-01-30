@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ArcGIS Crime Data Connector</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://connectors.tableau.com/libs/tableauwdc-2.3.latest.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-2xl mx-auto bg-white p-6 rounded-lg shadow-md">
+        <h1 class="text-2xl font-bold mb-6">ArcGIS Crime Data Connector</h1>
+        <p class="text-gray-700 mb-4">Click the button below to fetch all ArcGIS crime data into Tableau.</p>
+        <div id="status" class="text-sm text-gray-600 mb-4"></div>
+        <button id="submitButton" class="w-full bg-blue-500 text-white py-2 px-4 mt-4 rounded hover:bg-blue-600">
+            Get Crime Data
+        </button>
+    </div>
+
+    <script>
+        (function() {
+            const BASE_URL = "https://services.arcgis.com/RmCCgQtiZLDCtblq/arcgis/rest/services/PART_I_AND_II_CRIMES-YTD/FeatureServer/0/query?";
+            const PAGE_SIZE = 2000;
+            var myConnector = tableau.makeConnector();
+
+            myConnector.getSchema = function(schemaCallback) {
+                $.getJSON(BASE_URL + "outFields=*&where=1%3D1&f=json&resultRecordCount=1", function(data) {
+                    if (!data.features || data.features.length === 0) {
+                        tableau.abortWithError("No data available.");
+                        return;
+                    }
+
+                    var firstRecord = data.features[0].attributes;
+                    var columns = Object.keys(firstRecord).map(function(colName) {
+                        return { id: colName, dataType: tableau.dataTypeEnum.string };
+                    });
+
+                    var tableSchema = {
+                        id: "arcgisCrimeData",
+                        alias: "ArcGIS Crime Data (All Records)",
+                        columns: columns
+                    };
+
+                    schemaCallback([tableSchema]);
+                }).fail(function(error) {
+                    console.error("Schema Error:", error);
+                    tableau.abortWithError("Error fetching column metadata.");
+                });
+            };
+
+            myConnector.getData = function(table, doneCallback) {
+                let offset = 0;
+                let hasMoreData = true;
+
+                function fetchPage() {
+                    if (!hasMoreData) {
+                        console.log("No more data to fetch, completing...");
+                        doneCallback();
+                        return;
+                    }
+
+                    const url = BASE_URL + "outFields=*&where=1%3D1&f=json&resultOffset=" + offset + "&resultRecordCount=" + PAGE_SIZE;
+                    console.log("Fetching page with offset:", offset);
+
+                    $.getJSON(url)
+                        .done(function(data) {
+                            if (!data.features || data.features.length === 0) {
+                                console.log("No features in response, ending");
+                                hasMoreData = false;
+                                doneCallback();
+                                return;
+                            }
+
+                            const pageData = data.features.map(function(feature) {
+                                return feature.attributes;
+                            });
+
+                            console.log(`Processing ${pageData.length} records`);
+                            table.appendRows(pageData);
+
+                            // Check if we've received fewer records than requested
+                            if (pageData.length < PAGE_SIZE) {
+                                console.log("Received less than page size, must be last page");
+                                hasMoreData = false;
+                                doneCallback();
+                                return;
+                            }
+
+                            offset += pageData.length;
+                            setTimeout(fetchPage, 500);
+                        })
+                        .fail(function(error) {
+                            console.error("Data fetch error:", error);
+                            tableau.abortWithError("Error fetching data from API.");
+                        });
+                }
+
+                fetchPage();
+            };
+
+            tableau.registerConnector(myConnector);
+
+            $(document).ready(function() {
+                $("#submitButton").click(function() {
+                    tableau.connectionName = "ArcGIS Crime Data (All Records)";
+                    tableau.submit();
+                });
+            });
+        })();
+    </script>
+</body>
+</html>
